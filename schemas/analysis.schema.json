@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:knitcode:analysis:2.0",
+  "title": "KnitCode static analysis 2.0",
+  "type": "object",
+  "required": ["schema_version", "metadata", "files", "nodes", "edges", "insights", "diagnostics", "stats"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "metadata": {
+      "type": "object",
+      "required": ["analyzer", "analyzer_version", "python_version", "project_root", "source_root", "analyzed_at", "analysis_status", "options", "positions", "snapshot_id", "coverage"],
+      "properties": {
+        "analyzer": {"const": "knitcode_analyzer_v2"},
+        "analyzer_version": {"type": "string"},
+        "python_version": {"type": "string"},
+        "project_root": {"type": "string"},
+        "source_root": {"type": "string"},
+        "analyzed_at": {"type": "string", "format": "date-time"},
+        "analysis_status": {"enum": ["complete", "partial", "empty"]},
+        "snapshot_id": {"$ref": "#/$defs/hash"},
+        "positions": {"const": {"line_base": 1, "column_base": 0, "column_unit": "utf-8-bytes", "end_exclusive": true}},
+        "options": {
+          "type": "object", "required": ["source_root", "excludes", "excluded_directories", "follow_links"],
+          "properties": {"source_root": {"type": "string"}, "excludes": {"$ref": "#/$defs/strings"}, "excluded_directories": {"$ref": "#/$defs/strings"}, "follow_links": {"const": false}}
+        },
+        "coverage": {
+          "type": "object", "required": ["scope", "skipped"],
+          "properties": {
+            "scope": {"enum": ["whole_project", "source_root_only"]},
+            "skipped": {"type": "array", "items": {
+              "type": "object", "required": ["path", "kind", "reason"],
+              "properties": {"path": {"type": "string"}, "kind": {"enum": ["file", "directory"]}, "reason": {"enum": ["default_exclusion", "user_exclusion", "output_directory", "link_skipped"]}}
+            }}
+          }
+        }
+      }
+    },
+    "files": {"type": "array", "items": {
+      "type": "object", "required": ["path", "module", "sha256", "encoding", "parse_status", "node_id"],
+      "properties": {
+        "path": {"type": "string"}, "module": {"type": "string"},
+        "sha256": {"anyOf": [{"$ref": "#/$defs/hash"}, {"type": "null"}]},
+        "encoding": {"type": ["string", "null"]},
+        "parse_status": {"enum": ["ok", "read_error", "decode_error", "syntax_error", "parser_error"]},
+        "node_id": {"$ref": "#/$defs/nodeId"}
+      }
+    }},
+    "nodes": {"type": "array", "items": {
+      "type": "object", "required": ["id", "type", "name", "qualified_name", "file", "parent", "range", "docstring"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nodeId"}, "type": {"enum": ["file", "class", "function", "method"]},
+        "name": {"type": "string"}, "qualified_name": {"type": "string"}, "file": {"type": "string"},
+        "parent": {"anyOf": [{"$ref": "#/$defs/nodeId"}, {"type": "null"}]},
+        "range": {"$ref": "#/$defs/nullableRange"}, "docstring": {"type": ["string", "null"]},
+        "is_async": {"type": "boolean"}, "returns": {"type": ["string", "null"]},
+        "parameters": {"type": "array", "items": {
+          "type": "object", "required": ["name", "kind", "default", "annotation"],
+          "properties": {"name": {"type": "string"}, "kind": {"enum": ["positional_only", "positional_or_keyword", "var_positional", "keyword_only", "var_keyword"]}, "default": {"type": ["string", "null"]}, "annotation": {"type": ["string", "null"]}}
+        }}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"enum": ["function", "method"]}}}, "then": {"required": ["is_async", "parameters", "returns"]}},
+        {"if": {"properties": {"type": {"const": "file"}}}, "then": {"properties": {"parent": {"type": "null"}}}, "else": {"properties": {"parent": {"$ref": "#/$defs/nodeId"}, "range": {"$ref": "#/$defs/range"}}}}
+      ]
+    }},
+    "edges": {"type": "array", "items": {
+      "type": "object", "required": ["id", "type", "source", "target", "evidence", "provenance"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^edge:[0-9a-f]{64}$"},
+        "type": {"enum": ["contains", "imports", "calls"]},
+        "source": {"$ref": "#/$defs/nodeId"}, "target": {"anyOf": [{"$ref": "#/$defs/nodeId"}, {"type": "null"}]},
+        "evidence": {"type": "object", "required": ["file", "range"], "properties": {"file": {"type": "string"}, "range": {"$ref": "#/$defs/range"}}},
+        "provenance": {"type": "object", "required": ["provider", "resolution_rule"], "properties": {"provider": {"const": "python_ast"}, "resolution_rule": {"type": "string"}}},
+        "resolution_status": {"enum": ["resolved", "builtin", "external", "unresolved"]},
+        "expression": {"type": "string"}, "reason": {"type": ["string", "null"]},
+        "builtin_name": {"type": "string"}, "external_name": {"type": "string"}, "origin_verified": {"const": false},
+        "context": {"enum": ["module_body", "class_body", "function_body", "annotation", "definition_expression"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "contains"}}}, "then": {"not": {"required": ["resolution_status"]}, "properties": {"target": {"$ref": "#/$defs/nodeId"}}}, "else": {"required": ["resolution_status", "expression", "reason"]}},
+        {"if": {"properties": {"type": {"const": "calls"}}}, "then": {"required": ["context"]}},
+        {"if": {"required": ["resolution_status"], "properties": {"resolution_status": {"const": "resolved"}}}, "then": {"properties": {"target": {"$ref": "#/$defs/nodeId"}}}},
+        {"if": {"required": ["resolution_status"], "properties": {"resolution_status": {"enum": ["builtin", "external", "unresolved"]}}}, "then": {"properties": {"target": {"type": "null"}}}},
+        {"if": {"required": ["resolution_status"], "properties": {"resolution_status": {"const": "builtin"}}}, "then": {"required": ["builtin_name"]}},
+        {"if": {"required": ["resolution_status"], "properties": {"resolution_status": {"const": "external"}}}, "then": {"required": ["external_name", "origin_verified"]}},
+        {"if": {"required": ["resolution_status"], "properties": {"resolution_status": {"const": "unresolved"}}}, "then": {"properties": {"reason": {"type": "string"}}}}
+      ]
+    }},
+    "insights": {
+      "type": "object", "required": ["overview", "entry_points", "reading_order", "reading_limit", "fallback_used", "components", "metrics", "file_relations"],
+      "properties": {
+        "overview": {"type": "object", "required": ["kind", "text", "node_ids"], "properties": {"kind": {"const": "observed"}, "text": {"type": "string"}, "node_ids": {"$ref": "#/$defs/strings"}}},
+        "entry_points": {"type": "array", "items": {"$ref": "#/$defs/insight"}},
+        "reading_order": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/insight"}},
+        "reading_limit": {"type": "object", "required": ["max_depth", "max_items", "omitted_node_count", "cycle_edge_ids"]},
+        "fallback_used": {"type": "boolean"},
+        "components": {"type": "array", "items": {"$ref": "#/$defs/insight"}},
+        "metrics": {"type": "array", "items": {"type": "object", "required": ["node_id", "kind", "caller_count", "callee_count", "call_site_count", "incoming_edge_ids", "outgoing_edge_ids"]}},
+        "file_relations": {"type": "array", "items": {"type": "object", "required": ["source_file", "target_file", "type", "count", "edge_ids"]}}
+      }
+    },
+    "diagnostics": {"type": "array", "items": {
+      "type": "object", "required": ["file", "code", "severity", "message"],
+      "properties": {"file": {"type": ["string", "null"]}, "code": {"type": "string"}, "severity": {"enum": ["info", "warning", "error"]}, "message": {"type": "string"}, "range": {"$ref": "#/$defs/range"}}
+    }},
+    "stats": {
+      "type": "object", "required": ["file_count", "read_file_count", "parsed_file_count", "parse_failed_file_count", "skipped_file_count", "skipped_directory_count", "definition_count", "import_count", "call_count", "calls_by_status", "unresolved_by_reason", "resolution_rate", "unresolved_rate", "analysis_seconds"],
+      "properties": {
+        "file_count": {"$ref": "#/$defs/count"}, "read_file_count": {"$ref": "#/$defs/count"}, "parsed_file_count": {"$ref": "#/$defs/count"}, "parse_failed_file_count": {"$ref": "#/$defs/count"},
+        "skipped_file_count": {"$ref": "#/$defs/count"}, "skipped_directory_count": {"$ref": "#/$defs/count"}, "definition_count": {"$ref": "#/$defs/count"}, "import_count": {"$ref": "#/$defs/count"}, "call_count": {"$ref": "#/$defs/count"},
+        "calls_by_status": {"type": "object", "required": ["resolved", "builtin", "external", "unresolved"], "additionalProperties": {"$ref": "#/$defs/count"}},
+        "unresolved_by_reason": {"type": "object", "additionalProperties": {"$ref": "#/$defs/count"}},
+        "resolution_rate": {"$ref": "#/$defs/rate"}, "unresolved_rate": {"$ref": "#/$defs/rate"}, "analysis_seconds": {"type": "number", "minimum": 0}
+      }
+    }
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nodeId": {"type": "string", "pattern": "^node:[0-9a-f]{64}$"},
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "count": {"type": "integer", "minimum": 0},
+    "rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "range": {
+      "type": "object", "required": ["start_line", "start_col", "end_line", "end_col"], "additionalProperties": false,
+      "properties": {"start_line": {"type": "integer", "minimum": 1}, "start_col": {"$ref": "#/$defs/count"}, "end_line": {"type": "integer", "minimum": 1}, "end_col": {"$ref": "#/$defs/count"}}
+    },
+    "nullableRange": {"anyOf": [{"$ref": "#/$defs/range"}, {"type": "null"}]},
+    "insight": {
+      "type": "object", "required": ["node_id", "kind", "text", "evidence"],
+      "properties": {"node_id": {"$ref": "#/$defs/nodeId"}, "kind": {"enum": ["observed", "documented", "heuristic"]}, "text": {"type": "string"},
+        "evidence": {"type": "object", "required": ["file", "range"], "properties": {"file": {"type": "string"}, "range": {"$ref": "#/$defs/nullableRange"}}}}
+    }
+  }
+}

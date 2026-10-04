@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knitcode-analyzer-v2"
+version = "0.1.0"
+description = "Local Python structure analysis and evidence-based Korean reports"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["jsonschema>=4.23,<5"]
+
+[project.scripts]
+knitcode-analyzer-v2 = "knitcode_analyzer_v2.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["knitcode_analyzer_v2*"]
+
