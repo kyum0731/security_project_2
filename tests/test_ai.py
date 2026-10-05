@@ -2,6 +2,8 @@ import copy
 import io
 import json
 import unittest
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -10,6 +12,7 @@ from knitcode_analyzer_v2 import analyze_project
 from knitcode_analyzer_v2.ai import AIError, NoRedirect, endpoint_url, explain, validate_answer
 from knitcode_analyzer_v2.context import build_context
 from knitcode_analyzer_v2.assist import main
+from knitcode_analyzer_v2.reports.ai_markdown import render_ai_markdown
 from .helpers import test_directory, write
 
 
@@ -90,6 +93,78 @@ class AITests(unittest.TestCase):
             with self.assertRaises(AIError):
                 explain(context, base_url="http://localhost:1234/v1", model="test-model")
             build.assert_not_called()
+
+    def test_ollama_native_request_over_local_http(self):
+        recorded = {}
+        reply = {"done": True, "done_reason": "stop", "message": {"content": json.dumps(self.answer)}}
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                recorded.update(path=self.path, authorization=self.headers.get("Authorization"),
+                                payload=json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                raw = json.dumps(reply).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+            def log_message(self, *args):
+                pass
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        thread.start()
+        try:
+            result = explain(self.context, base_url=f"http://127.0.0.1:{server.server_port}", model="local-test",
+                             provider="ollama", api_key="do-not-forward", num_ctx=8192)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+        self.assertEqual(result["provider"], "ollama_local")
+        self.assertEqual(recorded["path"], "/api/chat")
+        self.assertIsNone(recorded["authorization"])
+        self.assertEqual(recorded["payload"]["format"], "json")
+        self.assertEqual(recorded["payload"]["options"]["num_ctx"], 8192)
+        self.assertNotIn("response_format", recorded["payload"])
+
+    def test_ollama_guards_and_incomplete_response(self):
+        for url in ("https://example.invalid", "http://localhost:11434/v1"):
+            with self.assertRaises(AIError):
+                endpoint_url(url, "ollama")
+        with patch("knitcode_analyzer_v2.ai.build_opener") as build:
+            with self.assertRaises(AIError):
+                explain(self.context, base_url="http://localhost:11434", model="model:cloud", provider="ollama")
+            build.assert_not_called()
+            build.return_value.open.return_value = io.BytesIO(json.dumps({"done": True, "done_reason": "length"}).encode())
+            with self.assertRaises(AIError):
+                explain(self.context, base_url="http://localhost:11434", model="local-model", provider="ollama")
+
+    def test_cli_ollama_settings_and_markdown_output(self):
+        output, markdown = self.root / "result.json", self.root / "result.md"
+        env = {"KNITCODE_AI_BASE_URL": "https://external.invalid/v1", "KNITCODE_AI_MODEL": "external-model", "KNITCODE_AI_API_KEY": "external-key"}
+        with patch.dict("os.environ", env, clear=True), patch("knitcode_analyzer_v2.ai.build_opener") as build, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            build.return_value.open.return_value = io.BytesIO(json.dumps({"done": True, "done_reason": "stop", "message": {"content": json.dumps(self.answer)}}).encode())
+            code = main(["explain", str(self.root), "--query", "run", "--provider", "ollama", "--model", "local-test", "--output", str(output), "--markdown-output", str(markdown)])
+            self.assertEqual(code, 0)
+            request = build.return_value.open.call_args.args[0]
+            self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/chat")
+            self.assertIsNone(request.get_header("Authorization"))
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["status"], "complete")
+        text = markdown.read_text(encoding="utf-8")
+        self.assertIn("run은 1을 반환합니다", text)
+        self.assertIn("E1", text)
+        self.assertIn("def run(): return 1", text)
+
+    def test_markdown_failure_escape_and_preflight(self):
+        value = {"context": self.context, "status": "failed", "model": "local", "endpoint": "http://localhost", "snapshot_id": "snap", "input_hash": "hash", "error": "<script>[click](bad)</script>"}
+        text = render_ai_markdown(value)
+        self.assertNotIn("<script>", text)
+        self.assertIn("설명 생성 실패", text)
+        markdown = write(self.root, "existing.md", "my notes")
+        with patch("knitcode_analyzer_v2.ai.build_opener") as build, redirect_stderr(io.StringIO()):
+            code = main(["explain", str(self.root), "--query", "run", "--provider", "ollama", "--model", "local", "--markdown-output", str(markdown)])
+            self.assertEqual(code, 2)
+            build.assert_not_called()
+        self.assertEqual(markdown.read_text(), "my notes")
 
 
 if __name__ == "__main__":

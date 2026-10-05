@@ -1,6 +1,6 @@
 # F·I 확장 계약
 
-작성일: 2026-10-05 · 분석기 0.2.0 · 정적 데이터 계약 2.0 유지
+작성일: 2026-10-05 · 분석기 0.2.1 · 정적 데이터 계약 2.0 유지
 
 ## 범위
 
@@ -30,17 +30,20 @@ F는 기존 HTML 보고서에 포함되는 오프라인 관계 탐색기다. I�
 
 ## 선택 API와 응답
 
-외부 API와 로컬 호환 서버 모두 같은 Chat Completions 어댑터를 사용한다. 모델·주소에는 기본값이 없으며 키는 환경 변수로만 받는다. 참고 계약: [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
+`--provider api`는 외부 또는 로컬 Chat Completions 호환 서버를 사용한다. 모델·주소에는 기본값이 없으며 키는 환경 변수로만 받는다. 참고 계약: [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
+
+`--provider ollama`는 별도 [Ollama 네이티브 Chat API](https://docs.ollama.com/api/chat) 어댑터다. 기본 `http://127.0.0.1:11434/api/chat`에 요청하며 루프백 주소만 허용한다. `format: json`, `stream: false`, `options.num_predict: 4096`, 설정 가능한 `options.num_ctx`(기본 16384)를 사용한다. `done: true`, `done_reason: stop` 응답만 처리한다. 외부 API 환경 변수와 키를 사용하지 않으며 알려진 cloud 모델 태그를 거부한다. 서버의 임의 프록시나 사용자 정의 모델 동작까지 검증하지는 않으므로 로컬 전용 사용에는 다운로드한 모델과 `OLLAMA_NO_CLOUD=1`로 시작한 서버를 사용한다.
 
 - `explain`만 전송하며 질문·선택 원문·상대 경로·정적 관계·분석 범위가 요청에 담긴다. 주소와 모델, 제공 원문 수를 stderr에 표시한다.
 - 원격 HTTPS, 루프백 HTTP/HTTPS 지원. HTTP 루프백은 `localhost`, `127.0.0.1`, `::1`로 한정한다. 루프백은 프록시를 우회하고 리디렉션은 모두 거부한다.
-- 요청은 최대 1MB, 응답은 최대 2MB, 연결·읽기 timeout은 기본 60초(설정 1~120초)다. timeout은 소켓 작업 제한이며 전체 작업의 엄격한 벽시계 시간 상한은 아니다. 자동 재시도하지 않는다.
+- 요청은 최대 1MB, 응답은 최대 2MB, 연결·읽기 timeout은 기본 60초(설정 1~600초)다. timeout은 소켓 작업 제한이며 전체 작업의 엄격한 벽시계 시간 상한은 아니다. 자동 재시도하지 않는다.
 - 비스트리밍 JSON 응답이며 `finish_reason=stop`만 완료로 처리한다. 거부·잘린 응답·JSON 오류·없는 근거 ID·없는 제안 노드를 실패로 처리한다.
 - `claims`는 observation/inference와 하나 이상의 제공 근거 ID를 포함한다. 근거 위치는 모델이 임의로 쓴 좌표를 신뢰하지 않고 해당 ID의 실제 파일·범위·해시로 연결한다.
 - 관계 제안은 별도 `suggested_relations`에 `ai_hypothesis_unverified`로 남긴다. 정적 edges·HTML·manifest를 수정하지 않는다. 근거 위치가 유효해도 설명이나 제안 자체의 의미 정확성을 검증한 것은 아니다.
 - 프롬프트는 원문·docstring의 지시를 신뢰하지 않도록 규정하고 도구 실행 기능을 제공하지 않는다. 이를 완전한 프롬프트 주입 방어로 주장하지 않는다.
 - 결과에 모델·대상 주소·프롬프트 버전·snapshot·문맥 입력 해시·실제 요청 해시를 남긴다. API 키와 HTTP 오류 본문은 저장하지 않는다.
 - 실패는 별도 JSON의 `status: failed`, 오류 설명, 문맥으로 남기며 종료 코드 3이다. 입력·출력 오류 2, 취소 130, 성공 0이다. AI 출력은 새 파일에만 저장한다.
+- `--markdown-output`은 같은 설명 응답을 한국어 Markdown으로 추가 저장한다. 질문·상태·모델·해시, 관찰/추정, 근거 원문·위치, 미제공 범위, 실패 이유를 담는다. 모델 문자열은 이스케이프하며 원문 코드 블록은 원문보다 긴 fence를 사용한다. 출력 경로는 전송 전에 충돌을 검사한다. 두 파일 저장 전체가 하나의 원자적 트랜잭션은 아니므로 디스크 오류 시 일부 파일만 저장될 수 있다. `report.html`·정적 manifest에는 포함하지 않는다.
 
 `context` 파일을 검토한 뒤 `explain`할 수 있으나 후자는 그 파일을 재사용하지 않고 재분석한다. 동일 소스·옵션·질문이면 동일 문맥 해시가 생성되고, 원문이 바뀌면 해시도 바뀐다. 실제 제공 서비스와 모델별 품질·비용·처리 한도는 별도 검증이 필요하다.
 

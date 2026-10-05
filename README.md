@@ -145,30 +145,90 @@ python -m knitcode_analyzer_v2.assist context "C:/work/my-python-project" --quer
 
 `--source-root src`, 반복 `--exclude`도 기본 분석과 같이 사용할 수 있습니다. 기본 문맥은 거리 1, 원문 최대 8개, 원문 문자 수 16,000자이며 거리 0~2·노드 1~20·원문 1,000~100,000자로 조정할 수 있습니다. 문자 수 예산은 토큰 수나 전체 HTTP 요청 크기와 다릅니다. 큰 함수를 중간에서 자르지 않고 생략 이유를 기록합니다. 관계는 최대 80개를 제공하고 초과 수를 기록합니다.
 
-### AI 서버 설정과 설명 요청
+### I의 실행 흐름
 
-Chat Completions 호환 서버의 기본 주소(`/v1`까지)와 모델을 직접 설정합니다. 모델 기본값은 없습니다. 외부 서비스와 로컬 호환 서버를 모두 지원하며, 모델 서버 자체의 설치는 이 프로젝트에 포함하지 않습니다.
-
-```powershell
-$env:KNITCODE_AI_BASE_URL = "https://사용할-서버/v1"
-$env:KNITCODE_AI_MODEL = "사용할-모델명"
-# KNITCODE_AI_API_KEY에는 해당 서버의 키를 현재 환경에 설정합니다.
-python -m knitcode_analyzer_v2.assist explain "C:/work/my-python-project" --query "calculate_price 함수의 역할을 설명해줘" --output "./reports/explanation.json"
+```text
+프로젝트 재분석 (AI 없음)
+  → 이름·경로·docstring 검색 또는 --node로 대상 선택
+  → 선택한 정의와 호출·import 주변 원문 수집
+  → 원문 해시·문맥 예산 확인
+  → explain일 때만 외부 API 또는 로컬 Ollama에 요청
+  → 응답 JSON과 근거 ID 검사
+  → JSON 출력 + 선택적 Markdown 설명 문서 저장
 ```
 
-키는 `KNITCODE_AI_API_KEY` 환경 변수로만 읽고 결과에 저장하지 않습니다. 주소·모델은 `--base-url`·`--model`로도 지정할 수 있습니다. 로컬 서버 예시는 `http://127.0.0.1:1234/v1`이며 실제 서버의 포트로 바꾸세요. 루프백 HTTP에서는 키를 생략할 수 있고 프록시 환경 변수를 사용하지 않습니다. 원격 주소에는 HTTPS와 키가 필요합니다. 리디렉션은 따라가지 않습니다.
+`search`, `context`, `explain`은 각자 한 번에 실행하는 명령입니다. 앞의 두 명령을 먼저 실행하지 않아도 `explain`이 내부에서 검색과 문맥 구성을 수행합니다. 검색은 자연어 의미 검색이 아니므로 질문에 실제 함수 이름을 포함하거나 `--node`로 대상을 지정하세요.
+
+### 방법 A: 외부 API로 설명하기
+
+`--provider api`는 Chat Completions 호환 API를 사용합니다(생략 시 기본값). 서버의 기본 주소(`/v1`까지)·해당 서비스에서 사용 가능한 모델·발급받은 API 키를 설정합니다. 아래는 OpenAI 주소 예시이며 모델명과 키는 실제 값으로 바꿉니다. 선택된 원문과 질문이 해당 서비스로 전송되며 서비스 사용 요금이 발생할 수 있습니다.
+
+```powershell
+$env:KNITCODE_AI_BASE_URL = "https://api.openai.com/v1"
+$env:KNITCODE_AI_MODEL = "사용할-모델명"
+$env:KNITCODE_AI_API_KEY = "발급받은-API-키"
+python -m knitcode_analyzer_v2.assist explain "C:/work/my-python-project" --provider api --query "calculate_price 함수의 역할을 설명해줘" --output "./reports/api-explanation.json" --markdown-output "./reports/api-explanation.md"
+```
+
+키는 `KNITCODE_AI_API_KEY` 환경 변수로만 읽고 결과에 저장하지 않습니다. 실제 키를 README나 소스에 적지 마세요. 위 환경 변수 설정은 현재 PowerShell 세션에 적용됩니다. 주소·모델은 `--base-url`·`--model`로도 지정할 수 있습니다. 다른 호환 서비스는 주소·모델·키를 해당 서비스 값으로 바꾸면 됩니다. Chat Completions 형식과 다른 API를 직접 호출하는 어댑터는 포함하지 않습니다.
+
+로컬 Chat Completions 호환 서버도 `--provider api --base-url http://127.0.0.1:1234/v1 --model "로컬-모델명"`으로 연결할 수 있습니다. 루프백 HTTP에서는 키를 생략할 수 있고 프록시 환경 변수를 사용하지 않습니다. 이 방식에서 키 환경 변수가 남아 있으면 설정한 로컬 서버에도 전달되므로 불필요한 키는 현재 세션에서 비우세요. 아래 Ollama 전용 모드는 외부 API 키를 읽거나 전송하지 않습니다.
 
 호환 계약은 `POST /chat/completions`, `messages`, `response_format: {"type":"json_object"}`, `max_completion_tokens`, 비스트리밍 응답입니다. 서버·모델이 이 계약을 지원해야 하며 모든 ‘호환’ 서버를 검증한 것은 아닙니다. API 형식은 [OpenAI 공식 Chat Completions 문서](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)를 참고했습니다. 실제 외부 API 호출·모델 품질 평가는 아직 하지 않았습니다.
+
+### 방법 B: Ollama로 로컬 AI 사용하기
+
+1. [Ollama Windows 설치 안내](https://docs.ollama.com/windows)에 따라 설치합니다. KnitCode가 Ollama나 모델을 자동 설치하지는 않습니다.
+2. PowerShell에서 모델을 내려받고 설치 목록을 확인합니다. 아래 `qwen2.5-coder:7b`는 [실행 예시 모델](https://ollama.com/library/qwen2.5-coder:7b)이며 이 프로젝트에서 품질을 보증한 추천 모델은 아닙니다. PC의 RAM·GPU 메모리에 맞는 로컬 모델을 선택하세요.
+
+```powershell
+ollama pull qwen2.5-coder:7b
+ollama ls
+```
+
+모델 다운로드에는 인터넷이 필요합니다. 로컬 추론은 내려받은 모델을 사용합니다. 클라우드 기능까지 끄려면 실행 중인 Ollama를 트레이에서 종료한 뒤 아래 명령으로 서버를 시작합니다. 이 창은 서버 실행 상태로 두고, KnitCode 명령은 다른 PowerShell에서 실행하세요. 설정 근거는 [Ollama 로컬 전용 모드 안내](https://docs.ollama.com/faq#how-do-i-disable-ollama-cloud-features)입니다.
+
+```powershell
+$env:OLLAMA_NO_CLOUD = "1"
+ollama serve
+```
+
+`prototype_2` 폴더의 다른 PowerShell에서 실행합니다. 이미 KnitCode를 설치했다면 `PYTHONPATH` 설정은 생략합니다.
+
+```powershell
+$env:PYTHONPATH = "$PWD/src"
+python -m knitcode_analyzer_v2.assist explain "C:/work/my-python-project" --provider ollama --model "qwen2.5-coder:7b" --query "calculate_price 함수의 역할을 설명해줘" --max-chars 8000 --timeout 300 --output "./reports/local-explanation.json" --markdown-output "./reports/local-explanation.md"
+```
+
+이 모드는 Ollama의 [네이티브 Chat API](https://docs.ollama.com/api/chat)를 사용합니다. 기본 주소는 `http://127.0.0.1:11434`이며 `/v1`을 붙이지 않습니다. 다른 로컬 포트는 `--base-url` 또는 `KNITCODE_OLLAMA_BASE_URL`로 지정합니다. 모델은 `--model` 또는 `KNITCODE_OLLAMA_MODEL`로 지정합니다. 외부 API용 `KNITCODE_AI_*` 설정은 사용하지 않습니다.
+
+원격 주소와 알려진 `:cloud`·`-cloud` 모델 태그는 거부합니다. 이 검사만으로 임의의 로컬 프록시나 사용자 정의 모델의 실행 위치를 증명하지는 않습니다. 내려받은 모델과 클라우드를 끈 Ollama 서버를 사용하세요. 기본 문맥 창은 `--num-ctx 16384` 토큰이며 모델·메모리에 맞게 조정할 수 있습니다. 원문 `--max-chars`와 토큰 수는 다르므로 너무 큰 문맥은 줄이세요. 기본 timeout은 60초, 최대 600초이며 느린 초기 모델 로딩에는 위 예시처럼 늘릴 수 있습니다.
 
 `explain`은 현재 소스를 새로 분석해 문맥을 구성합니다. 앞서 저장한 `context.json`을 그대로 전송하는 명령은 아니므로, 두 명령 사이 소스를 변경하면 입력도 달라집니다. 구성 시 원문 해시를 확인해 분석 결과와 다른 파일을 섞지 않습니다. 선택 대상이 예산 때문에 빠지면 전송하지 않습니다.
 
 ### 결과와 실패 처리
 
+| 실행 옵션 | 출력 위치와 형식 |
+| --- | --- |
+| 출력 옵션 없음 | 터미널 stdout에 JSON. 파일은 생성하지 않음 |
+| `--output ./reports/local-explanation.json` | 현재 디렉터리의 지정 경로에 전체 JSON 저장. stdout에는 JSON을 중복 출력하지 않음 |
+| `--markdown-output ./reports/local-explanation.md` | 설명·관찰/추정·근거 원문과 위치·한계를 Markdown으로 추가 저장. explain 전용 |
+| 두 옵션 함께 사용 | 같은 AI 응답으로 JSON과 Markdown 생성. AI를 두 번 호출하지 않음 |
+
+위 명령을 `prototype_2`에서 실행하면 `prototype_2/reports/` 아래에 저장됩니다. Markdown만 지정하면 JSON은 터미널에 출력됩니다. 기존 파일은 덮어쓰지 않으므로 다시 실행할 때 새 파일명을 사용하세요. 기존 `report.html`에는 AI 결과를 자동 삽입하지 않습니다. 정적 그래프·보고서와 AI 설명 문서는 별개입니다.
+
+Markdown을 텍스트로 확인하거나 JSON의 설명 부분만 확인하려면 다음처럼 실행합니다.
+
+```powershell
+Get-Content ./reports/local-explanation.md -Encoding UTF8
+(Get-Content ./reports/local-explanation.json -Raw -Encoding UTF8 | ConvertFrom-Json).answer.claims | Format-List
+```
+
 - 기본 출력은 UTF-8 JSON입니다. `--output`을 지정하면 새 JSON 파일에 저장하며 기존 파일은 덮어쓰지 않습니다.
 - 설명에는 모델·주소·snapshot·프롬프트 버전·입력/요청 해시·제공 원문·생략 이유를 기록합니다.
 - `answer.claims`는 관찰과 추정을 구분합니다. 각 항목의 근거 ID를 제공된 파일·범위·해시로 연결합니다. 근거가 존재한다는 검사는 설명의 진실성을 보장하지 않습니다.
 - AI 관계 제안은 `answer.suggested_relations`의 미검증 가설로만 저장합니다. `analysis.json`의 정적 관계나 그래프를 수정하지 않습니다.
-- AI 실패는 `status: failed`와 문맥을 남기고 종료 코드 3을 반환합니다. 잘못된 입력·출력은 2, 취소는 130입니다. 기존 정적 보고서는 그대로 사용할 수 있습니다.
+- AI 실패는 `status: failed`와 문맥을 남기고 종료 코드 3을 반환합니다. Markdown을 지정했으면 실패 이유와 제공 문맥을 문서로도 남깁니다. 잘못된 입력·출력은 2, 취소는 130입니다. 기존 정적 보고서는 그대로 사용할 수 있습니다.
 - 원문과 docstring 안의 지시는 데이터로 취급하도록 요청하며, AI가 반환한 코드·명령을 실행하지 않습니다. 공유할 문맥·설명 JSON에도 원문이 담기므로 공유 대상을 확인하세요.
 
 ## 결과를 읽는 순서
@@ -258,6 +318,7 @@ prototype_2/
 │           ├── common.py          # HTML·Markdown 보고서의 공통 처리
 │           ├── html.py            # 단일 HTML 보고서 생성
 │           ├── graph.py           # HTML 안의 SVG 그래프·검색·필터·확장 UI
+│           ├── ai_markdown.py     # AI 설명·근거·실패 결과의 Markdown 문서 생성
 │           └── markdown.py        # Markdown 보고서 생성
 └── tests/
     ├── __init__.py                # 테스트 패키지 표시

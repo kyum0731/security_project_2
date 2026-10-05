@@ -1,4 +1,4 @@
-"""Optional, explicit Chat Completions adapter. No dependency on the analyzer."""
+"""Explicit Chat Completions / local Ollama adapters with shared evidence checks."""
 
 import json
 from urllib.error import HTTPError, URLError
@@ -30,13 +30,19 @@ class NoRedirect(HTTPRedirectHandler):
         raise AIError("AI 서버의 리디렉션을 거부했습니다. 최종 API 주소를 직접 설정하세요.")
 
 
-def endpoint_url(base_url):
+def endpoint_url(base_url, provider="api"):
+    if provider not in {"api", "ollama"}:
+        raise AIError("지원하지 않는 AI provider입니다.")
     parts = urlsplit(base_url)
     if not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
         raise AIError("AI 주소에는 호스트와 API 기본 경로만 지정하세요. 인증 정보·쿼리·fragment는 허용하지 않습니다.")
     local = parts.hostname in {"localhost", "127.0.0.1", "::1"}
     if parts.scheme != "https" and not (parts.scheme == "http" and local):
         raise AIError("원격 AI에는 HTTPS가 필요합니다. HTTP는 localhost/127.0.0.1/::1만 허용합니다.")
+    if provider == "ollama":
+        if not local or parts.path not in {"", "/"}:
+            raise AIError("ollama 모드에는 로컬 서버 주소만 지정하세요. 예: http://127.0.0.1:11434 (/v1 제외)")
+        return base_url.rstrip("/") + "/api/chat", True
     return base_url.rstrip("/") + "/chat/completions", local
 
 
@@ -73,10 +79,16 @@ def validate_answer(answer, context):
     return answer
 
 
-def explain(context, *, base_url, model, api_key="", timeout=60):
-    endpoint, local = endpoint_url(base_url)
-    if not model or len(model) > 200 or not 1 <= timeout <= 120:
-        raise AIError("모델명과 1~120초의 timeout이 필요합니다.")
+def explain(context, *, base_url, model, api_key="", timeout=60, provider="api", num_ctx=16384):
+    endpoint, local = endpoint_url(base_url, provider)
+    if not model or len(model) > 200 or not 1 <= timeout <= 600:
+        raise AIError("모델명과 1~600초의 timeout이 필요합니다.")
+    if provider == "ollama":
+        if ":cloud" in model.casefold() or "-cloud" in model.casefold():
+            raise AIError("ollama 모드는 다운로드한 로컬 모델용입니다. cloud 모델을 지정할 수 없습니다.")
+        if not 1024 <= num_ctx <= 131072:
+            raise AIError("Ollama num_ctx는 1024~131072 범위여야 합니다.")
+        api_key = ""  # Never forward a cloud API credential to the local model server.
     if not local and not api_key:
         raise AIError("원격 API를 사용하려면 KNITCODE_AI_API_KEY를 설정하세요.")
     if any(ord(char) < 32 or ord(char) > 126 for char in api_key):
@@ -87,6 +99,9 @@ def explain(context, *, base_url, model, api_key="", timeout=60):
                 {"role": "user", "content": json.dumps(context, ensure_ascii=False)}]
     payload = {"model": model, "messages": messages, "response_format": {"type": "json_object"},
                "max_completion_tokens": 4096, "stream": False}
+    if provider == "ollama":
+        payload = {"model": model, "messages": messages, "format": "json", "stream": False,
+                   "options": {"num_predict": 4096, "num_ctx": num_ctx}}
     raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     if len(raw) > 1_000_000:
         raise AIError("AI 요청이 1MB를 초과했습니다. 문맥 예산을 줄이세요.")
@@ -102,17 +117,23 @@ def explain(context, *, base_url, model, api_key="", timeout=60):
         if len(response_raw) > 2_000_000:
             raise AIError("AI 응답이 2MB 제한을 초과했습니다.")
         body = json.loads(response_raw)
-        choice = body["choices"][0]
-        if choice.get("finish_reason") != "stop" or choice["message"].get("refusal"):
-            raise AIError("AI 응답이 완료되지 않았거나 모델이 요청을 거부했습니다.")
-        answer = validate_answer(json.loads(choice["message"]["content"]), context)
+        if provider == "ollama":
+            if body.get("done") is not True or body.get("done_reason") != "stop":
+                raise AIError("Ollama 응답이 완료되지 않았거나 출력 한도에서 중단됐습니다.")
+            content = body["message"]["content"]
+        else:
+            choice = body["choices"][0]
+            if choice.get("finish_reason") != "stop" or choice["message"].get("refusal"):
+                raise AIError("AI 응답이 완료되지 않았거나 모델이 요청을 거부했습니다.")
+            content = choice["message"]["content"]
+        answer = validate_answer(json.loads(content), context)
     except HTTPError as error:
         raise AIError(f"AI HTTP 오류 {error.code}. 주소·모델·인증·서버 설정을 확인하세요.") from None
     except (URLError, OSError, TimeoutError):
         raise AIError("AI 연결 또는 응답 시간 오류. 정적 분석 결과는 그대로 사용할 수 있습니다.") from None
     except (KeyError, IndexError, TypeError, AttributeError, UnicodeError, json.JSONDecodeError):
         raise AIError("AI 서버가 유효한 JSON 응답 계약을 반환하지 않았습니다.") from None
-    return {"status": "complete", "provider": "chat_completions_compatible", "endpoint": endpoint,
+    return {"status": "complete", "provider": "ollama_local" if provider == "ollama" else "chat_completions_compatible", "endpoint": endpoint,
             "model": model, "prompt_version": context["prompt_version"], "input_hash": context["input_hash"],
             "request_hash": digest(payload), "snapshot_id": context["snapshot_id"], "context": context,
             "answer": answer, "validation": "근거 ID·원문 해시·위치를 검사했습니다. 설명 내용의 정확성 검증은 아닙니다."}
