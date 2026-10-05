@@ -1,4 +1,4 @@
-# 분석 결과 계약 2.0
+# 분석 결과 계약 2.1
 
 최상위 필드: `schema_version`, `metadata`, `files`, `nodes`, `edges`, `insights`, `diagnostics`, `stats`. 구조 제약은 [JSON Schema](../schemas/analysis.schema.json), 의미상 참조·통계 검사는 `analyzer.validate_result()`에 정의합니다. 1.0과 자동 호환되지 않습니다.
 
@@ -14,13 +14,19 @@
 
 ## 노드와 관계
 
-노드는 `file`, `class`, `function`, `method`이며 비동기는 `is_async`로 나타냅니다. 파일 이외의 정의는 parent와 contains 관계를 갖습니다. 매개변수 종류·기본값·타입 힌트는 선언된 텍스트이고 실제 런타임 값이 아닙니다.
+노드는 `file`, `class`, `function`, `method`, `variable`이며 비동기는 `is_async`로 나타냅니다. 파일 이외의 요소는 parent와 contains 관계를 갖습니다. 변수는 스코프·이름별 하나이며 `variable_kind`는 `module`, `local`, `parameter`, `class_attribute`입니다. 변수 range는 처음 수집된 선언/바인딩 위치이며 모든 쓰기 위치를 뜻하지 않습니다. 매개변수 종류·기본값·타입 힌트는 선언된 텍스트이고 실제 런타임 값이 아닙니다.
 
 | 관계 | 방향 / 특징 |
 | --- | --- |
 | `contains` | 부모→자식. 항상 실제 target. resolution_status 없음 |
 | `imports` | 가져오는 범위→내부 파일 또는 정의. import 항목별 기록 |
 | `calls` | 호출이 속한 범위→내부 정의. 호출 위치별 기록 |
+| `reads` / `writes` / `deletes` | 사용 범위→변수. 각 구문 위치별 기록. 복합 대입은 읽기와 쓰기 모두 기록 |
+| `references` | 사용 범위→함수·클래스·모듈의 어휘적 참조. 실제 호출 대상 증명과는 구분 |
+| `inherits` | 자식 클래스→명시적 부모 클래스. 동적 기반식·미해결 대상은 target null |
+| `depends_on` | 대입받는 변수→우변에서 참조하는 변수. 근거는 대입문 전체이며 동일 문장·변수 쌍은 하나 |
+
+`definition_count`는 클래스·함수·메서드 수를 유지하며 `variable_count`가 변수 수입니다. 변수 관계는 값·실행 경로를 추론하지 않으며 호출 해석의 이름 가림 규칙을 완화하지 않습니다. `global`·`nonlocal` 및 클래스 범위를 구분하고 명시적 모듈 변수 import를 연결합니다. 혼합된 정의/import/대입, wildcard, 객체 속성, 람다·컴프리헨션 내부, 해석 불가 참조는 임의 연결하지 않습니다. 클래스 본문에서 현재 줄 또는 뒤에만 바인딩된 이름의 읽기는 실행 순서에 따른 외부 이름 fallback을 추정하지 않고 생략합니다. `depends_on`은 단순 Name 대입 대상만 지원하고 구조 분해·객체 속성 대입은 제외합니다. 타입 힌트의 reads/references는 annotation 문맥이며 평가 여부를 보장하지 않습니다.
 
 resolved target은 반드시 nodes에 존재합니다. builtin·external·unresolved는 target null입니다. builtin_name, external_name 또는 reason이 대상을 설명합니다. external의 origin_verified는 false이며 `외부 패키지 설치 확인`을 뜻하지 않습니다.
 
@@ -40,4 +46,4 @@ JSON stdout은 단일 분석 객체입니다. 파일 결과는 analysis.json, re
 
 파일 결과를 읽을 때 `verify_manifest(directory)`가 true인지 확인하세요. 다중 파일 교체 전체가 원자적이지 않으므로 완료 표식과 해시가 맞지 않으면 재분석 결과를 기다리거나 오류로 처리해야 합니다. 편집기에서 실제 코드로 이동하거나 후속 AI 입력을 구성할 때 해당 소스 파일의 해시도 따로 확인해야 합니다.
 
-스키마 2.x에서 기존 의미를 보존하는 필드 추가는 가능하지만 소비자는 미지원 주 버전을 거부해야 합니다. 현재 패키지 버전은 0.2.1이고 데이터 버전 2.0과 독립적입니다. F의 그래프는 이 결과의 표시용 변환이며 I의 문맥·AI 설명은 별도 JSON에 저장합니다. 정적 결과 스키마에 AI 추정 관계를 삽입하지 않습니다. 추가 계약은 [F·I 확장 문서](extensions.md)를 따릅니다.
+현재 패키지 버전은 0.4.0, 데이터 버전은 2.1입니다. 2.0의 호출·정의 의미는 유지하고 변수 노드·관계 종류·변수 통계를 확장했습니다. enum을 엄격히 검증하는 소비자는 새 스키마로 갱신해야 하며 현재 validate_result는 현재 버전만 받습니다. 기존 저장 결과는 재분석하여 갱신합니다. F의 그래프는 결과의 표시용 변환이며 I의 문맥·AI 설명과 J의 실행 관측은 별도 JSON에 저장합니다. 정적 결과 스키마에 AI 추정 관계나 동적 관계를 삽입하지 않습니다. 추가 계약은 [F·I 확장 문서](extensions.md)와 [동적 분석 계약](runtime.md)을 따릅니다.

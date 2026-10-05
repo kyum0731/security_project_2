@@ -18,7 +18,8 @@ SCRIPT = r"""
   const nodes = new Map(data.nodes.map(n => [n.id,n]));
   const edges = new Map(data.edges.map(e => [e.id,e]));
   let focus = '', expanded = new Set(), scale = 1;
-  const color = {calls:'#176f60',imports:'#4265ad',contains:'#957332'};
+  const color = {calls:'#176f60',imports:'#4265ad',contains:'#957332',observed_calls:'#a444aa',reads:'#187c92',writes:'#b45424',deletes:'#ac344b',references:'#64758a',inherits:'#6545b1',depends_on:'#985725'};
+  const kindsLabel = {file:'파일',class:'클래스',function:'함수',method:'메서드',variable:'변수'};
   function text(tag, value, parent) {const el=document.createElement(tag);el.textContent=value;parent.append(el);return el;}
   function svg(tag, attrs, parent) {
     const el=document.createElementNS('http:'+'//www.w3.org/2000/svg',tag);
@@ -36,12 +37,12 @@ SCRIPT = r"""
     const list=text('ul','',detail);
     for(const id of ids){const e=edges.get(id),r=e.evidence.range,li=text('li','',list);
       text('p',e.type+' · '+(e.expression||'소속')+' · '+(e.resolution_status||'구조'),li);
-      jump(id,e.evidence.file+':'+r.start_line+':'+r.start_col,li);
+      jump(id,e.evidence.file+(r?':'+r.start_line+':'+r.start_col:' (정확한 위치 없음)'),li);
     }
   }
   function describe(id){
     const n=nodes.get(id),detail=$('graph-detail');detail.replaceChildren();
-    text('h3',label(n),detail);jump(id,'보고서 코드 상세 보기',detail);
+    text('h3',kindsLabel[n.type]+' · '+label(n),detail);jump(id,'보고서 코드 상세 보기',detail);
     if(n.docstring)text('p',n.docstring,detail);
     const actions=text('div','',detail);actions.className='graph-actions';
     const select=text('button','이 노드를 중심으로',actions);select.onclick=()=>choose(id);
@@ -57,9 +58,10 @@ SCRIPT = r"""
   function choose(id){focus=id;expanded=new Set([id]);$('graph-node').value=id;draw();describe(id);}
   function populate(preferred){
     const query=$('graph-search').value.toLocaleLowerCase(),level=$('graph-level').value;
-    const candidates=data.nodes.filter(n=>(level==='symbol'||n.type==='file') && (label(n)+' '+(n.docstring||'')).toLocaleLowerCase().includes(query));
+    const type=$('graph-node-type')?.value || 'all';
+    const candidates=data.nodes.filter(n=>(level==='symbol'||n.type==='file') && (level==='file'||type==='all'||n.type===type) && (label(n)+' '+(n.docstring||'')).toLocaleLowerCase().includes(query));
     const select=$('graph-node');select.replaceChildren();
-    for(const n of candidates){const option=text('option',label(n),select);option.value=n.id;}
+    for(const n of candidates){const option=text('option',kindsLabel[n.type]+' · '+label(n),select);option.value=n.id;}
     const id=candidates.some(n=>n.id===preferred)?preferred:candidates[0]?.id;
     if(id)choose(id);else{focus='';$('graph-svg').replaceChildren();$('graph-detail').replaceChildren();$('graph-status').textContent='일치하는 코드 요소가 없습니다.';}
   }
@@ -67,7 +69,8 @@ SCRIPT = r"""
     if(!focus)return;
     const kinds=new Set(Array.from(document.querySelectorAll('[data-graph-kind]:checked')).map(e=>e.value));
     const level=$('graph-level').value,direction=$('graph-direction').value;
-    const relations=(level==='file'?data.file_edges:data.symbol_edges).filter(e=>kinds.has(e.type));
+    const origin=$('graph-origin')?.value || 'all';
+    const relations=(level==='file'?data.file_edges:data.symbol_edges).filter(e=>kinds.has(e.type==='observed_calls'?'calls':e.type) && (origin==='all'||(origin==='runtime'?e.type==='observed_calls':e.type!=='observed_calls')));
     const wanted=new Set([focus]),eligible=[];
     for(const e of relations){
       if((direction!=='in'&&expanded.has(e.source))||(direction!=='out'&&expanded.has(e.target))){eligible.push(e);wanted.add(e.source);wanted.add(e.target);}
@@ -89,21 +92,24 @@ SCRIPT = r"""
         `M ${a.x} ${a.y} Q ${(a.x+b.x)/2} ${(a.y+b.y)/2+24+(i%3)*12} ${b.x+(a.x>b.x?130:-130)} ${b.y}`;
       const g=svg('g',{class:'graph-edge',tabindex:0,role:'button','aria-label':e.type+' '+label(nodes.get(e.source))+' → '+label(nodes.get(e.target))},canvas);
       svg('path',{d:path,stroke:color[e.type],fill:'none','stroke-width':2,'stroke-dasharray':e.type==='contains'?'5 4':'none','marker-end':'url(#graph-arrow-'+e.type+')'},g);
-      const t=svg('text',{x:same?a.x:(a.x+b.x)/2,y:same?a.y-62:(a.y+b.y)/2+12+(i%3)*12,fill:color[e.type],'font-size':12},g);t.textContent=e.type+' ×'+e.edge_ids.length;
+      const t=svg('text',{x:same?a.x:(a.x+b.x)/2,y:same?a.y-62:(a.y+b.y)/2+12+(i%3)*12,fill:color[e.type],'font-size':12},g);t.textContent=(e.type==='observed_calls'?'실행 관측':e.type)+' ×'+(e.count??e.edge_ids.length);
       g.onclick=()=>evidence(e.edge_ids);g.onkeydown=event=>{if(event.key==='Enter')evidence(e.edge_ids);};
     });
     for(const id of shown){const n=nodes.get(id),p=positions.get(id),g=svg('g',{class:'graph-node',tabindex:0,role:'button','aria-label':label(n)},canvas);
       g.setAttribute('data-node-id',id);
-      svg('rect',{x:p.x-130,y:p.y-23,width:260,height:46,rx:8,fill:id===focus?'#d5eee3':'white',stroke:'#6b9f8d'},g);
+      svg('rect',{x:p.x-130,y:p.y-23,width:260,height:46,rx:n.type==='variable'?20:8,fill:id===focus?'#d5eee3':n.type==='class'?'#eee9fb':n.type==='variable'?'#fff2df':'white',stroke:'#6b9f8d'},g);
       const title=svg('title',{},g);title.textContent=label(n);
-      const t=svg('text',{x:p.x,y:p.y+4,'text-anchor':'middle','font-size':12,fill:'#17312e'},g);const name=n.type==='file'?n.file:n.qualified_name;t.textContent=name.length>32?name.slice(0,29)+'…':name;
+      const t=svg('text',{x:p.x,y:p.y-2,'text-anchor':'middle','font-size':12,fill:'#17312e'},g);const name=n.type==='file'?n.file:n.qualified_name;t.textContent=name.length>32?name.slice(0,29)+'…':name;
+      svg('text',{x:p.x,y:p.y+15,'text-anchor':'middle','font-size':10,fill:'#536966'},g).textContent=kindsLabel[n.type];
       g.onclick=()=>describe(id);g.ondblclick=()=>choose(id);g.onkeydown=e=>{if(e.key==='Enter')describe(id);};
     }
   }
   $('graph-search').oninput=()=>populate(focus);
   $('graph-level').onchange=()=>populate();
+  if($('graph-node-type'))$('graph-node-type').onchange=()=>populate();
   $('graph-node').onchange=e=>choose(e.target.value);
   $('graph-direction').onchange=draw;
+  if($('graph-origin'))$('graph-origin').onchange=draw;
   document.querySelectorAll('[data-graph-kind]').forEach(e=>e.onchange=draw);
   $('graph-reset').onclick=()=>{expanded=new Set([focus]);scale=1;draw();};
   $('graph-expand').onclick=()=>{for(const el of $('graph-svg').querySelectorAll('.graph-node'))expanded.add(el.getAttribute('data-node-id'));draw();};
@@ -118,19 +124,27 @@ def script_hash():
     return base64.b64encode(hashlib.sha256(SCRIPT.encode("utf-8")).digest()).decode("ascii")
 
 
-def render_graph(result):
-    payload = json.dumps(graph_data(result), ensure_ascii=False).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+def render_graph(result, *, runtime=None):
+    payload = json.dumps(graph_data(result, runtime=runtime), ensure_ascii=False).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
     return '''<section id="graph"><h2>관계 그래프</h2>
-<p class="muted">파일을 선택하고 주변 관계를 탐색하세요. 노드 선택 후 정의를 펼치거나 주변을 확장할 수 있습니다. 관계 선을 선택하면 모든 근거 위치를 확인합니다. 실제 실행 순서도가 아닙니다.</p>
+<p class="muted">함수·클래스·변수를 선택해 주변 관계를 탐색하세요. 소속 → 코드 요소, 함수 → 읽거나 쓰는 변수, 자식 클래스 → 부모 클래스 방향입니다. 중심 요소 종류는 선택 목록을 좁히며 연결된 이웃은 함께 표시합니다. 관계 선을 선택하면 근거 위치를 확인합니다. 변수 값이나 실제 실행 경로를 추론하지 않습니다.</p>
 <noscript>그래프는 JavaScript가 필요합니다. 아래 파일 관계와 코드 상세는 JavaScript 없이도 읽을 수 있습니다.</noscript>
 <div class="graph-controls">
 <label>이름·경로·docstring 검색<input id="graph-search" type="search" placeholder="함수 또는 파일 이름"></label>
-<label>표시 단위<select id="graph-level"><option value="file">파일</option><option value="symbol">파일·정의</option></select></label>
+<label>표시 단위<select id="graph-level"><option value="symbol">함수·클래스·변수</option><option value="file">파일 요약</option></select></label>
+<label>중심 요소 종류<select id="graph-node-type"><option value="all">전체</option><option value="function">함수</option><option value="method">메서드</option><option value="class">클래스</option><option value="variable">변수</option><option value="file">파일</option></select></label>
 <label>중심 요소<select id="graph-node" aria-label="중심 요소"></select></label>
 <label>방향<select id="graph-direction"><option value="both">양방향</option><option value="out">나가는 관계</option><option value="in">들어오는 관계</option></select></label>
+<label>관계 출처<select id="graph-origin"><option value="all">함께 보기</option><option value="static">정적 분석</option><option value="runtime">실행 관측 (보라색)</option></select></label>
 <label><input type="checkbox" data-graph-kind value="calls" checked>calls · 호출</label>
 <label><input type="checkbox" data-graph-kind value="imports" checked>imports · 가져오기</label>
 <label><input type="checkbox" data-graph-kind value="contains" checked>contains · 소속</label>
+<label><input type="checkbox" data-graph-kind value="reads" checked>reads · 읽기</label>
+<label><input type="checkbox" data-graph-kind value="writes" checked>writes · 이름 쓰기</label>
+<label><input type="checkbox" data-graph-kind value="deletes" checked>deletes · 이름 삭제</label>
+<label><input type="checkbox" data-graph-kind value="references" checked>references · 참조</label>
+<label><input type="checkbox" data-graph-kind value="inherits" checked>inherits · 상속</label>
+<label><input type="checkbox" data-graph-kind value="depends_on" checked>depends_on · 대입식 참조</label>
 </div><div class="graph-actions"><button id="graph-expand">표시된 노드 주변 확장</button><button id="graph-reset">1단계로 초기화</button><button id="graph-zoom-in" aria-label="확대">확대 +</button><button id="graph-zoom-out" aria-label="축소">축소 −</button></div>
 <p id="graph-status" class="meta" role="status"></p><div class="graph-layout"><div class="graph-canvas"><svg id="graph-svg" role="group" aria-label="정적 코드 관계 그래프"></svg></div><div id="graph-detail" class="graph-detail" aria-live="polite"></div></div>
 </section>''' + '<script type="application/json" id="graph-data">' + payload + '</script>' + '<script>' + SCRIPT + '</script>'

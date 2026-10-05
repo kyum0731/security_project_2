@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:knitcode:analysis:2.0",
-  "title": "KnitCode static analysis 2.0",
+  "$id": "urn:knitcode:analysis:2.1",
+  "title": "KnitCode static analysis 2.1",
   "type": "object",
   "required": ["schema_version", "metadata", "files", "nodes", "edges", "insights", "diagnostics", "stats"],
   "additionalProperties": false,
   "properties": {
-    "schema_version": {"const": "2.0"},
+    "schema_version": {"const": "2.1"},
     "metadata": {
       "type": "object",
       "required": ["analyzer", "analyzer_version", "python_version", "project_root", "source_root", "analyzed_at", "analysis_status", "options", "positions", "snapshot_id", "coverage"],
@@ -49,7 +49,8 @@
     "nodes": {"type": "array", "items": {
       "type": "object", "required": ["id", "type", "name", "qualified_name", "file", "parent", "range", "docstring"],
       "properties": {
-        "id": {"$ref": "#/$defs/nodeId"}, "type": {"enum": ["file", "class", "function", "method"]},
+        "id": {"$ref": "#/$defs/nodeId"}, "type": {"enum": ["file", "class", "function", "method", "variable"]},
+        "variable_kind": {"enum": ["module", "local", "parameter", "class_attribute"]},
         "name": {"type": "string"}, "qualified_name": {"type": "string"}, "file": {"type": "string"},
         "parent": {"anyOf": [{"$ref": "#/$defs/nodeId"}, {"type": "null"}]},
         "range": {"$ref": "#/$defs/nullableRange"}, "docstring": {"type": ["string", "null"]},
@@ -60,6 +61,7 @@
         }}
       },
       "allOf": [
+        {"if": {"properties": {"type": {"const": "variable"}}}, "then": {"required": ["variable_kind"]}},
         {"if": {"properties": {"type": {"enum": ["function", "method"]}}}, "then": {"required": ["is_async", "parameters", "returns"]}},
         {"if": {"properties": {"type": {"const": "file"}}}, "then": {"properties": {"parent": {"type": "null"}}}, "else": {"properties": {"parent": {"$ref": "#/$defs/nodeId"}, "range": {"$ref": "#/$defs/range"}}}}
       ]
@@ -68,7 +70,7 @@
       "type": "object", "required": ["id", "type", "source", "target", "evidence", "provenance"],
       "properties": {
         "id": {"type": "string", "pattern": "^edge:[0-9a-f]{64}$"},
-        "type": {"enum": ["contains", "imports", "calls"]},
+        "type": {"enum": ["contains", "imports", "calls", "reads", "writes", "deletes", "references", "inherits", "depends_on"]},
         "source": {"$ref": "#/$defs/nodeId"}, "target": {"anyOf": [{"$ref": "#/$defs/nodeId"}, {"type": "null"}]},
         "evidence": {"type": "object", "required": ["file", "range"], "properties": {"file": {"type": "string"}, "range": {"$ref": "#/$defs/range"}}},
         "provenance": {"type": "object", "required": ["provider", "resolution_rule"], "properties": {"provider": {"const": "python_ast"}, "resolution_rule": {"type": "string"}}},
@@ -105,8 +107,9 @@
       "properties": {"file": {"type": ["string", "null"]}, "code": {"type": "string"}, "severity": {"enum": ["info", "warning", "error"]}, "message": {"type": "string"}, "range": {"$ref": "#/$defs/range"}}
     }},
     "stats": {
-      "type": "object", "required": ["file_count", "read_file_count", "parsed_file_count", "parse_failed_file_count", "skipped_file_count", "skipped_directory_count", "definition_count", "import_count", "call_count", "calls_by_status", "unresolved_by_reason", "resolution_rate", "unresolved_rate", "analysis_seconds"],
+      "type": "object", "required": ["file_count", "read_file_count", "parsed_file_count", "parse_failed_file_count", "skipped_file_count", "skipped_directory_count", "definition_count", "variable_count", "import_count", "call_count", "calls_by_status", "unresolved_by_reason", "resolution_rate", "unresolved_rate", "analysis_seconds"],
       "properties": {
+        "variable_count": {"$ref": "#/$defs/count"},
         "file_count": {"$ref": "#/$defs/count"}, "read_file_count": {"$ref": "#/$defs/count"}, "parsed_file_count": {"$ref": "#/$defs/count"}, "parse_failed_file_count": {"$ref": "#/$defs/count"},
         "skipped_file_count": {"$ref": "#/$defs/count"}, "skipped_directory_count": {"$ref": "#/$defs/count"}, "definition_count": {"$ref": "#/$defs/count"}, "import_count": {"$ref": "#/$defs/count"}, "call_count": {"$ref": "#/$defs/count"},
         "calls_by_status": {"type": "object", "required": ["resolved", "builtin", "external", "unresolved"], "additionalProperties": {"$ref": "#/$defs/count"}},

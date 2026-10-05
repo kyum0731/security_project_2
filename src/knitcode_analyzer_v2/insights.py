@@ -37,7 +37,7 @@ def build_insights(result, source_files):
     calls_by_file = defaultdict(list)
     file_groups = defaultdict(list)
     for node in nodes.values():
-        if node["type"] != "file":
+        if node["type"] in {"class", "function", "method"}:
             definitions[node["file"]].append(node)
     for edge in result["edges"]:
         if edge["type"] == "calls":
@@ -45,13 +45,13 @@ def build_insights(result, source_files):
             outgoing[edge["source"]].append(edge)
             if edge["resolution_status"] == "resolved":
                 incoming[edge["target"]].append(edge)
-        if edge["type"] in {"calls", "imports"} and edge["resolution_status"] == "resolved":
+        if edge["type"] != "contains" and edge["resolution_status"] == "resolved":
             a, b = nodes[edge["source"]]["file"], nodes[edge["target"]]["file"]
             if a != b:
                 file_groups[a, b, edge["type"]].append(edge["id"])
     metrics = []
     for node in nodes.values():
-        if node["type"] == "file":
+        if node["type"] in {"file", "variable"}:
             continue
         ins, outs = incoming[node["id"]], outgoing[node["id"]]
         metrics.append({"node_id": node["id"], "kind": "observed",

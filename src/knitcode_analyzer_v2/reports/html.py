@@ -1,9 +1,11 @@
 """Standalone report and offline graph; no CDN or external requests."""
 
 import html
+from collections import defaultdict
 from .common import ANALYSIS_STATUS, CONTEXT, KIND, LIMITATION, STATUS, indexes, label, position, signature, target_text, tree
 from ..insights import REASONS
 from .graph import STYLE as GRAPH_STYLE, render_graph, script_hash
+from .symbols import render_symbol_html
 
 
 def esc(value):
@@ -21,10 +23,16 @@ header{background:#123c35;color:#fff;padding:38px;border-radius:20px}h1{font-siz
 """
 
 
-def render_html(result):
+def render_html(result, *, runtime=None):
     m, s, insights = result["metadata"], result["stats"], result["insights"]
     nodes, file_nodes, incoming, outgoing, imports = indexes(result)
     edge_by_id = {e["id"]: e for e in result["edges"]}
+    uses = defaultdict(list)
+    for edge in result["edges"]:
+        if edge["type"] != "contains":
+            uses[edge["source"]].append(edge)
+            if edge["target"] and edge["target"] != edge["source"]:
+                uses[edge["target"]].append(edge)
     def link(node_id):
         return f'<a href="#{node_id}">{esc(label(nodes[node_id]))}</a>'
     def evidence(ev):
@@ -66,7 +74,11 @@ def render_html(result):
         relations += "".join(f'<li><a href="#{eid}">{esc(position(edge_by_id[eid]["evidence"]))}</a></li>' for eid in rel["edge_ids"])
         relations += '</ul></details>'
     blocks.append(relations + '</section>')
-    blocks.append(render_graph(result))
+    if runtime is not None:
+        from .runtime import render_runtime_html
+        blocks.append(render_runtime_html(result, runtime))
+    blocks.append(render_graph(result, runtime=runtime))
+    blocks.append(render_symbol_html(result))
     metrics = {v["node_id"]: v for v in insights["metrics"]}
     components = {c["file"]: c for c in insights["components"]}
     detail = '<section id="files"><h2>파일·코드 상세</h2><p class="muted">파일을 펼쳐 정의와 호출 근거를 확인하세요. 위치는 행 1부터, 열 0부터의 UTF-8 바이트이며 끝은 제외합니다.</p>'
@@ -81,6 +93,12 @@ def render_html(result):
             if node["id"] in metrics:
                 metric = metrics[node["id"]]
                 detail += f'<p class="meta">고유 호출자 {metric["caller_count"]} · 내부 호출 대상 {metric["callee_count"]} · 호출 위치 {metric["call_site_count"]}</p>'
+            if node["type"] == "variable":
+                related = uses[node["id"]]
+                detail += '<p class="meta">변수 범위: ' + esc(node["variable_kind"]) + '</p><ul>'
+                detail += ''.join(f'<li><a href="#{e["id"]}">{esc(e["type"])} · {esc(position(e["evidence"]))}</a></li>' for e in related)
+                detail += '</ul></article>'
+                continue
             detail += '<h3>호출자</h3>'
             if incoming[node["id"]]:
                 detail += '<ul>' + "".join(f'<li>{link(e["source"])} · <a href="#{e["id"]}">{esc(position(e["evidence"]))}</a></li>' for e in incoming[node["id"]]) + '</ul>'

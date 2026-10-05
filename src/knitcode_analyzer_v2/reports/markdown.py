@@ -1,6 +1,7 @@
 import re
 from .common import ANALYSIS_STATUS, CONTEXT, KIND, LIMITATION, STATUS, indexes, label, position, signature, target_text, tree
 from ..insights import REASONS
+from .symbols import render_symbol_markdown
 
 
 def esc(value):
@@ -40,7 +41,7 @@ def render_markdown(result):
         lines.append("분석된 내부 파일 간 연결이 없습니다.")
     if len(relations) > 20:
         lines.append(f"전체 {len(relations)}개 중 20개 표시. 나머지는 HTML 전체 관계와 analysis.json에서 확인하세요.")
-    lines += ["", "## 파일·코드 상세", ""]
+    lines += ["", render_symbol_markdown(result), "", "## 파일·코드 상세", ""]
     components = {c["file"]: c for c in insights["components"]}
     metrics = {v["node_id"]: v for v in insights["metrics"]}
     for file in result["files"]:
@@ -55,6 +56,9 @@ def render_markdown(result):
             if node["id"] in metrics:
                 metric = metrics[node["id"]]
                 lines += [f"분석된 고유 호출자 {metric['caller_count']} · 내부 호출 대상 {metric['callee_count']} · 호출 위치 {metric['call_site_count']}", ""]
+            if node["type"] == "variable":
+                lines += [f"변수 범위: {node['variable_kind']} · 사용 근거는 위 변수 관계 표에 표시합니다.", ""]
+                continue
             lines.append("호출자:")
             lines.extend(f"- {esc(label(nodes[e['source']]))} · {esc(position(e['evidence']))}; ID {e['id']}" for e in incoming[node["id"]])
             if not incoming[node["id"]]:

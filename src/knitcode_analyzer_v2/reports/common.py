@@ -3,7 +3,10 @@ from ..insights import REASONS
 
 STATUS = {"resolved": "내부 연결", "builtin": "내장 이름", "external": "범위 밖 import", "unresolved": "미해결"}
 ANALYSIS_STATUS = {"complete": "분석 완료", "partial": "부분 분석", "empty": "Python 파일 없음"}
-KIND = {"file": "파일", "function": "함수", "method": "메서드", "class": "클래스"}
+KIND = {"file": "파일", "function": "함수", "method": "메서드", "class": "클래스", "variable": "변수"}
+RELATION = {"contains": "소속", "calls": "호출", "imports": "가져오기", "reads": "읽기",
+            "writes": "이름 쓰기", "deletes": "이름 삭제", "references": "참조", "inherits": "상속",
+            "depends_on": "대입식 참조"}
 CONTEXT = {"module_body": "모듈 본문", "class_body": "클래스 본문", "function_body": "함수 본문",
            "annotation": "타입 힌트 · 실행 여부 미확정", "definition_expression": "정의 시 표현식"}
 LIMITATION = "정적 관계는 실제 실행 순서·횟수나 모든 호출 대상을 보장하지 않습니다. 미해결은 코드 오류나 취약점 판정이 아닙니다."

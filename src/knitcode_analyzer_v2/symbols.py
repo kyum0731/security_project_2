@@ -13,6 +13,7 @@ class SymbolCollector(ast.NodeVisitor):
         self.result = result
         self.scope = Scope("file", file.node_id, "", file)
         file.scope = self.scope
+        result.scopes.append(self.scope)
         self.conditional = 0
         self.nonlocal_writes = []
         self.context = "module_body"
@@ -72,6 +73,7 @@ class SymbolCollector(ast.NodeVisitor):
         for decorator in node.decorator_list:
             self.visit_in_context(decorator, "definition_expression")
         if is_class:
+            self.result.bases.extend((parent, node_id, base) for base in node.bases)
             for expression in [*node.bases, *node.keywords]:
                 self.visit_in_context(expression, "definition_expression")
         else:
@@ -90,6 +92,7 @@ class SymbolCollector(ast.NodeVisitor):
         previous_context = self.context
         self.context = "class_body" if is_class else "function_body"
         self.scope = Scope("class" if is_class else "function", node_id, qualname, self.file, parent)
+        self.result.scopes.append(self.scope)
         self.conditional = 0
         for parameter in getattr(node, "type_params", []):
             self.bind(parameter.name, Binding("unsupported", parameter))
@@ -109,10 +112,16 @@ class SymbolCollector(ast.NodeVisitor):
         self.context = previous
 
     def visit_AnnAssign(self, node):
+        if node.value:
+            self.result.assignments.append((self.scope, node, [node.target], node.value))
         self.visit(node.target)
         self.visit_in_context(node.annotation, "annotation")
         if node.value:
             self.visit(node.value)
+
+    def visit_Assign(self, node):
+        self.result.assignments.append((self.scope, node, node.targets, node.value))
+        self.generic_visit(node)
 
     visit_FunctionDef = definition
     visit_AsyncFunctionDef = definition
@@ -163,10 +172,20 @@ class SymbolCollector(ast.NodeVisitor):
     visit_ImportFrom = imports
 
     def visit_Name(self, node):
+        kind = "reads" if isinstance(node.ctx, ast.Load) else "writes" if isinstance(node.ctx, ast.Store) else "deletes"
+        self.result.uses.append((self.scope, node, kind, self.context))
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             self.bind(node.id, Binding("assignment", node))
 
+    def visit_AugAssign(self, node):
+        self.result.assignments.append((self.scope, node, [node.target], node.value))
+        if isinstance(node.target, ast.Name):
+            self.result.uses.append((self.scope, node.target, "reads", self.context))
+        self.generic_visit(node)
+
     def visit_Attribute(self, node):
+        if isinstance(node.ctx, ast.Load):
+            self.result.uses.append((self.scope, node, "reads", self.context))
         if isinstance(node.ctx, (ast.Store, ast.Del)):
             root = node.value
             while isinstance(root, ast.Attribute):

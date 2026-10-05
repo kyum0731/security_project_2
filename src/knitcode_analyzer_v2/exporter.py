@@ -47,12 +47,16 @@ def validate_output_directory(directory, project, source):
     return directory
 
 
-def write_report(result, directory):
+def write_report(result, directory, *, runtime=None):
     validate_result(result)
     project = Path(result["metadata"]["project_root"])
     source = project / result["metadata"]["source_root"]
     directory = validate_output_directory(directory, project, source)
-    texts = {"analysis.json": to_json(result), "report.md": render_markdown(result), "report.html": render_html(result)}
+    markdown = render_markdown(result)
+    if runtime is not None:
+        from .reports.runtime import render_runtime_markdown
+        markdown += render_runtime_markdown(result, runtime)
+    texts = {"analysis.json": to_json(result), "report.md": markdown, "report.html": render_html(result, runtime=runtime)}
     manifest = {"producer": "knitcode_analyzer_v2", "schema_version": result["schema_version"],
                 "project_root": project.as_posix(), "snapshot_id": result["metadata"]["snapshot_id"],
                 "artifacts": {name: hashlib.sha256(value.encode("utf-8")).hexdigest() for name, value in texts.items()}}

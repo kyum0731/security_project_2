@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.2.1"
-SCHEMA_VERSION = "2.0"
+VERSION = "0.4.0"
+SCHEMA_VERSION = "2.1"
 
 
 def digest(value: Any) -> str:
@@ -87,6 +87,10 @@ class Collection:
     edges: list[dict[str, Any]] = field(default_factory=list)
     imports: list[dict[str, Any]] = field(default_factory=list)
     calls: list[tuple[SourceFile, Scope, ast.Call, str]] = field(default_factory=list)
+    scopes: list[Scope] = field(default_factory=list)
+    uses: list[tuple[Scope, ast.AST, str, str]] = field(default_factory=list)
+    bases: list[tuple[Scope, str, ast.AST]] = field(default_factory=list)
+    assignments: list[tuple[Scope, ast.AST, list[ast.AST], ast.AST]] = field(default_factory=list)
 
 
 @dataclass

@@ -13,6 +13,7 @@ from .resolver import Resolver
 from .scanner import EXCLUDED, scan_project
 from .symbols import SymbolCollector
 from .insights import build_insights
+from .relations import collect_relations
 
 
 def normalize(collection):
@@ -92,7 +93,8 @@ def validate_result(result):
     stats = result["stats"]
     if (stats["file_count"] != len(files) or stats["parsed_file_count"] != sum(f["parse_status"] == "ok" for f in files.values())
             or stats["parsed_file_count"] + stats["parse_failed_file_count"] != len(files)
-            or stats["definition_count"] != sum(n["type"] != "file" for n in nodes.values())
+            or stats["definition_count"] != sum(n["type"] in {"class", "function", "method"} for n in nodes.values())
+            or stats["variable_count"] != sum(n["type"] == "variable" for n in nodes.values())
             or stats["import_count"] != sum(e["type"] == "imports" for e in result["edges"])):
         raise ValueError("파일·정의·import 통계 불일치")
     insights = result.get("insights", {})
@@ -129,9 +131,11 @@ def analyze_project(project_root, *, source_root=None, excludes=(), excluded_pat
             SymbolCollector(file, local).collect()
             diagnostics.append({"file": file.relative, "code": "parser_error", "severity": "error",
                                 "message": "구조 수집 중 재귀 한도를 초과했습니다."})
-        for attr in ("nodes", "edges", "imports", "calls"):
+        for attr in ("nodes", "edges", "imports", "calls", "scopes", "uses", "bases", "assignments"):
             getattr(collection, attr).extend(getattr(local, attr))
-    Resolver(scan.files, scan.blocked_modules).resolve(collection)
+    resolver = Resolver(scan.files, scan.blocked_modules)
+    resolver.resolve(collection)
+    collect_relations(collection, resolver)
     ids = normalize(collection)
     for file in scan.files:
         if not file.content_hash:
@@ -175,7 +179,8 @@ def analyze_project(project_root, *, source_root=None, excludes=(), excluded_pat
                   "parse_failed_file_count": sum(f.parse_status != "ok" for f in scan.files),
                   "skipped_file_count": sum(s["kind"] == "file" for s in scan.skipped),
                   "skipped_directory_count": sum(s["kind"] == "directory" for s in scan.skipped),
-                  "definition_count": sum(n["type"] != "file" for n in collection.nodes),
+                  "definition_count": sum(n["type"] in {"class", "function", "method"} for n in collection.nodes),
+                  "variable_count": sum(n["type"] == "variable" for n in collection.nodes),
                   "import_count": len(collection.imports), "call_count": len(calls),
                   "calls_by_status": {s: statuses[s] for s in ("resolved", "builtin", "external", "unresolved")},
                   "unresolved_by_reason": dict(sorted(reasons.items())),
