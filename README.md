@@ -2,7 +2,7 @@
 
 **로컬 Python 프로젝트 경로를 입력하면, 코드를 실행하지 않고 구조·호출 관계·읽기 시작점을 한국어 보고서로 정리합니다.** AI, API 키, Git, VS Code, 분석 대상 패키지 설치가 필요하지 않습니다.
 
-구현 범위는 [계획서](pre_prototype_2.md)의 A~E입니다. 대화형 그래프, VS Code 확장, Git 공동 변경, AI 설명은 후속 단계입니다. 배포용 샘플 프로젝트는 포함하지 않습니다.
+구현 범위는 [계획서](pre_prototype_2.md)의 **A~F와 I**입니다. 기본 보고서에 오프라인 관계 그래프를 포함하며, 별도 명령으로 로컬 검색·문맥 구성·선택 AI 설명을 제공합니다. G(VS Code)·H(Git)는 구현하지 않았습니다. 배포용 샘플 프로젝트는 포함하지 않습니다.
 
 ## 실행 환경과 설치
 
@@ -110,6 +110,67 @@ Start-Process "./reports/my-project/report.html"
 
 `.pyi`, Jupyter Notebook, 다른 언어 파일, Git 기록은 현재 분석하지 않습니다. Git 저장소가 아닌 일반 폴더도 사용할 수 있습니다. 실제 실행 순서·횟수·입력 값·반환 값은 계산하지 않으며, 타입 힌트는 선언된 정보로 표시합니다. 파싱 가능한 문법은 실행 중인 Python 파서가 지원하는 범위입니다.
 
+## F: 오프라인 관계 그래프
+
+기존 분석 명령을 실행하고 `report.html`의 **관계 그래프**를 여세요. 별도 설치·서버·네트워크 연결이 필요하지 않습니다. 이전에 생성한 보고서에는 없으므로 업데이트 후 다시 분석해야 합니다.
+
+1. 파일 이름으로 검색하고 중심 파일을 선택합니다. 처음에는 선택 요소의 1단계 주변을 표시합니다.
+2. 노드를 선택해 **파일 안의 정의 펼치기**를 누르거나 표시 단위를 **파일·정의**로 바꿉니다. 함수·메서드·클래스도 선택할 수 있습니다.
+3. 방향과 `calls`·`imports`·`contains` 필터를 조합합니다. 들어오는 관계를 볼 때도 화살표는 원래 호출·import·소속 방향을 유지합니다.
+4. **이 노드 주변 확장** 또는 **표시된 노드 주변 확장**으로 탐색 범위를 늘립니다. 확대·축소와 스크롤을 사용할 수 있습니다.
+5. 관계 선이나 관계 이름을 선택하면 묶인 모든 근거 위치가 나타납니다. 근거 링크는 보고서의 상세 항목을 펼쳐 이동합니다.
+
+화면에는 최대 노드 40개·관계 묶음 100개를 표시하고 생략 수를 알립니다. 원자료를 잘라내지는 않습니다. 파일 그래프는 호출·import를 파일 단위로 집계하며, 같은 파일 내부 관계는 자기 자신을 향하는 선으로 표시합니다. `contains`는 파일·정의 모드에서 확인합니다. 대상이 없는 외부·내장·미해결 관계는 선택 노드의 별도 목록에 표시하며 가상 함수를 만들지 않습니다.
+
+JavaScript를 꺼도 기존 표·트리·코드 상세는 읽을 수 있습니다. 그래프의 코드는 HTML에 포함되고, 분석 대상의 문자열은 실행되지 않도록 이스케이프합니다.
+
+## I: 검색·문맥 구성·선택 AI 설명
+
+이 기능은 기본 분석과 분리한 `assist` 명령으로 실행합니다. **`search`와 `context`는 오프라인이고, `explain`만 설정한 AI 서버로 질문·선택 원문·관계·위치 정보를 전송합니다.** 가상환경이나 추가 런타임 라이브러리는 필요하지 않습니다. 설치를 생략했다면 앞에서 설명한 `PYTHONPATH`를 같은 터미널에 설정하세요.
+
+### 로컬 검색과 전송할 문맥 확인
+
+`calculate_price`는 분석할 프로젝트에 실제로 있는 이름이나 docstring의 단어로 바꿉니다.
+
+```powershell
+python -m knitcode_analyzer_v2.assist search "C:/work/my-python-project" --query "calculate_price"
+python -m knitcode_analyzer_v2.assist context "C:/work/my-python-project" --query "calculate_price" --output "./reports/context.json"
+```
+
+검색은 이름·경로·docstring의 단어 일치를 점수화합니다. 의미 검색이나 임베딩 검색은 아닙니다. 문맥은 최상위 검색 결과를 선택한 뒤 호출·import의 양방향 주변에서 모읍니다. 다른 대상을 지정하려면 검색 결과의 `node_id`를 `--node "노드 ID"`로 전달하세요. `--query`에는 질문을 넣을 수 있습니다.
+
+```powershell
+python -m knitcode_analyzer_v2.assist context "C:/work/my-python-project" --query "이 함수의 역할과 호출자를 설명해줘" --node "검색 결과의 node_id" --depth 1 --max-nodes 8 --max-chars 16000
+```
+
+`--source-root src`, 반복 `--exclude`도 기본 분석과 같이 사용할 수 있습니다. 기본 문맥은 거리 1, 원문 최대 8개, 원문 문자 수 16,000자이며 거리 0~2·노드 1~20·원문 1,000~100,000자로 조정할 수 있습니다. 문자 수 예산은 토큰 수나 전체 HTTP 요청 크기와 다릅니다. 큰 함수를 중간에서 자르지 않고 생략 이유를 기록합니다. 관계는 최대 80개를 제공하고 초과 수를 기록합니다.
+
+### AI 서버 설정과 설명 요청
+
+Chat Completions 호환 서버의 기본 주소(`/v1`까지)와 모델을 직접 설정합니다. 모델 기본값은 없습니다. 외부 서비스와 로컬 호환 서버를 모두 지원하며, 모델 서버 자체의 설치는 이 프로젝트에 포함하지 않습니다.
+
+```powershell
+$env:KNITCODE_AI_BASE_URL = "https://사용할-서버/v1"
+$env:KNITCODE_AI_MODEL = "사용할-모델명"
+# KNITCODE_AI_API_KEY에는 해당 서버의 키를 현재 환경에 설정합니다.
+python -m knitcode_analyzer_v2.assist explain "C:/work/my-python-project" --query "calculate_price 함수의 역할을 설명해줘" --output "./reports/explanation.json"
+```
+
+키는 `KNITCODE_AI_API_KEY` 환경 변수로만 읽고 결과에 저장하지 않습니다. 주소·모델은 `--base-url`·`--model`로도 지정할 수 있습니다. 로컬 서버 예시는 `http://127.0.0.1:1234/v1`이며 실제 서버의 포트로 바꾸세요. 루프백 HTTP에서는 키를 생략할 수 있고 프록시 환경 변수를 사용하지 않습니다. 원격 주소에는 HTTPS와 키가 필요합니다. 리디렉션은 따라가지 않습니다.
+
+호환 계약은 `POST /chat/completions`, `messages`, `response_format: {"type":"json_object"}`, `max_completion_tokens`, 비스트리밍 응답입니다. 서버·모델이 이 계약을 지원해야 하며 모든 ‘호환’ 서버를 검증한 것은 아닙니다. API 형식은 [OpenAI 공식 Chat Completions 문서](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)를 참고했습니다. 실제 외부 API 호출·모델 품질 평가는 아직 하지 않았습니다.
+
+`explain`은 현재 소스를 새로 분석해 문맥을 구성합니다. 앞서 저장한 `context.json`을 그대로 전송하는 명령은 아니므로, 두 명령 사이 소스를 변경하면 입력도 달라집니다. 구성 시 원문 해시를 확인해 분석 결과와 다른 파일을 섞지 않습니다. 선택 대상이 예산 때문에 빠지면 전송하지 않습니다.
+
+### 결과와 실패 처리
+
+- 기본 출력은 UTF-8 JSON입니다. `--output`을 지정하면 새 JSON 파일에 저장하며 기존 파일은 덮어쓰지 않습니다.
+- 설명에는 모델·주소·snapshot·프롬프트 버전·입력/요청 해시·제공 원문·생략 이유를 기록합니다.
+- `answer.claims`는 관찰과 추정을 구분합니다. 각 항목의 근거 ID를 제공된 파일·범위·해시로 연결합니다. 근거가 존재한다는 검사는 설명의 진실성을 보장하지 않습니다.
+- AI 관계 제안은 `answer.suggested_relations`의 미검증 가설로만 저장합니다. `analysis.json`의 정적 관계나 그래프를 수정하지 않습니다.
+- AI 실패는 `status: failed`와 문맥을 남기고 종료 코드 3을 반환합니다. 잘못된 입력·출력은 2, 취소는 130입니다. 기존 정적 보고서는 그대로 사용할 수 있습니다.
+- 원문과 docstring 안의 지시는 데이터로 취급하도록 요청하며, AI가 반환한 코드·명령을 실행하지 않습니다. 공유할 문맥·설명 JSON에도 원문이 담기므로 공유 대상을 확인하세요.
+
 ## 결과를 읽는 순서
 
 1. **프로젝트 한눈에 보기:** 분석 범위·파일 수·정의 수·호출 상태·파싱 실패를 확인합니다.
@@ -171,6 +232,7 @@ prototype_2/
 ├── docs/
 │   ├── analysis_contract.md       # 분석 결과 데이터와 소비자 간 계약
 │   ├── limitations.md             # 지원 범위·미해결 처리·분석 한계
+│   ├── extensions.md              # F·I 구현 계약과 검증 범위
 │   └── validation.md              # 검증 방법·측정 결과·환경 제한
 ├── schemas/
 │   └── analysis.schema.json       # analysis.json의 구조 검증용 JSON Schema
@@ -187,10 +249,15 @@ prototype_2/
 │       ├── models.py              # 데이터 모델·ID·소스 위치·결과 검증
 │       ├── insights.py            # 구조 요약·진입점 후보·읽기 안내 생성
 │       ├── exporter.py            # 산출물 저장·manifest 해시 검증·복원 처리
+│       ├── graph.py               # 정적 결과를 파일·정의 그래프로 변환
+│       ├── context.py             # 로컬 검색·주변 관계·해시 확인·문맥 예산
+│       ├── ai.py                  # 선택 API 호출·응답과 근거 ID 검증
+│       ├── assist.py              # search/context/explain 전용 명령
 │       └── reports/               # 보고서를 만드는 소스 코드: 반드시 유지
 │           ├── __init__.py        # 보고서 렌더링 함수 공개
 │           ├── common.py          # HTML·Markdown 보고서의 공통 처리
 │           ├── html.py            # 단일 HTML 보고서 생성
+│           ├── graph.py           # HTML 안의 SVG 그래프·검색·필터·확장 UI
 │           └── markdown.py        # Markdown 보고서 생성
 └── tests/
     ├── __init__.py                # 테스트 패키지 표시
@@ -202,6 +269,10 @@ prototype_2/
     ├── test_contract.py           # 스키마·ID·결과 일관성 검증
     ├── test_reports.py            # 보고서·출력 보호·manifest 검증
     ├── test_cli.py                # 명령행 옵션·출력·종료 코드 검증
+    ├── test_graph.py              # 그래프 근거 보존·스크립트 이스케이프 검증
+    ├── test_context.py            # 검색·문맥 예산·원문 해시·문맥 CLI 검증
+    ├── test_ai.py                 # 모의 API 응답·근거·실패·전송 경계 검증
+    ├── graph_ui_smoke.mjs         # 선택적 Node 실행으로 모의 DOM 그래프 동작 검증
     ├── evaluate.py                # 정답 사례 기준 분석 정확도 평가
     └── benchmark.py               # 지정 프로젝트의 반복 분석 시간 측정
 ```

@@ -1,8 +1,9 @@
-"""A standalone report with native disclosure widgets; no JavaScript or CDN."""
+"""Standalone report and offline graph; no CDN or external requests."""
 
 import html
 from .common import ANALYSIS_STATUS, CONTEXT, KIND, LIMITATION, STATUS, indexes, label, position, signature, target_text, tree
 from ..insights import REASONS
+from .graph import STYLE as GRAPH_STYLE, render_graph, script_hash
 
 
 def esc(value):
@@ -65,6 +66,7 @@ def render_html(result):
         relations += "".join(f'<li><a href="#{eid}">{esc(position(edge_by_id[eid]["evidence"]))}</a></li>' for eid in rel["edge_ids"])
         relations += '</ul></details>'
     blocks.append(relations + '</section>')
+    blocks.append(render_graph(result))
     metrics = {v["node_id"]: v for v in insights["metrics"]}
     components = {c["file"]: c for c in insights["components"]}
     detail = '<section id="files"><h2>파일·코드 상세</h2><p class="muted">파일을 펼쳐 정의와 호출 근거를 확인하세요. 위치는 행 1부터, 열 0부터의 UTF-8 바이트이며 끝은 제외합니다.</p>'
@@ -100,9 +102,9 @@ def render_html(result):
     cards = "".join(f'<div class="stat"><span>{name}</span><strong>{value}</strong></div>' for name, value in (
         ("Python 파일", s["file_count"]), ("정의", s["definition_count"]), ("호출 위치", s["call_count"]), ("파싱 실패", s["parse_failed_file_count"])))
     return ('<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'">'
-            f'<title>KnitCode · 프로젝트 분석</title><style>{STYLE}</style></head><body><div class="layout"><aside><strong>KNITCODE</strong>'
-            '<p class="muted">구조를 읽는 첫 지도</p><nav><a href="#overview">01 · 한눈에 보기</a><a href="#reading">02 · 읽기 시작점</a><a href="#tree">03 · 파일 구조</a><a href="#relations">04 · 파일 간 관계</a><a href="#files">05 · 코드 상세</a><a href="#diagnostics">06 · 진단과 한계</a></nav></aside><main>'
+            f'<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'sha256-{script_hash()}\'; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'">'
+            f'<title>KnitCode · 프로젝트 분석</title><style>{STYLE}{GRAPH_STYLE}</style></head><body><div class="layout"><aside><strong>KNITCODE</strong>'
+            '<p class="muted">구조를 읽는 첫 지도</p><nav><a href="#overview">01 · 한눈에 보기</a><a href="#reading">02 · 읽기 시작점</a><a href="#tree">03 · 파일 구조</a><a href="#relations">04 · 파일 간 관계</a><a href="#graph">05 · 관계 그래프</a><a href="#files">06 · 코드 상세</a><a href="#diagnostics">07 · 진단과 한계</a></nav></aside><main>'
             f'<header><div class="eyebrow">Local Python Analysis / No AI</div><h1>낯선 코드에서<br>읽기 시작점을 찾으세요.</h1><p>{esc(m["project_root"])}</p><span class="badge {m["analysis_status"]}">{ANALYSIS_STATUS[m["analysis_status"]]}</span>'
             f'<div class="meta">소스 루트: {esc(m["source_root"])} · Python {m["python_version"]}<br>분석 시각(UTC): {m["analyzed_at"]}</div></header><div class="stats">{cards}</div>'
             + "".join(blocks) + f'<footer>snapshot: {m["snapshot_id"]}<br>분석기 {m["analyzer_version"]} · 스키마 {result["schema_version"]} · 소요 {s["analysis_seconds"]}초<br>원자료: analysis.json · 문서: report.md · 저장 무결성: manifest.json</footer></main></div></body></html>')
